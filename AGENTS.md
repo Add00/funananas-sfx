@@ -1,6 +1,6 @@
 # @funananas/sfx — Agent Guide
 
-FunAnanas's sound engine as a shared package: one plain ES module (`src/sfx.js`, no dependencies, no build step), its types (`src/sfx.d.ts`) and its contract (`docs/sfx.md`). Two consumers: the FunAnanas game repo (it builds the engine into its vendor bundle as `window.createSfx`; not yet switched over) and Juicelab (`../juicelab`, the sound-effect tool; it imports it and renders in Node with `node-web-audio-api`).
+FunAnanas's sound engine as a shared package: one plain ES module (`src/sfx.js`, no dependencies, no build step), its types (`src/sfx.d.ts`) and its contract (`docs/sfx.md`: the engine's own, with nothing about how a FunAnanas game page wires it up, which is the game repo's `docs/sfx.md`). Two consumers: the FunAnanas game repo (it builds the engine into its vendor bundle as `window.createSfx`; not yet switched over) and Juicelab (`../juicelab`, the sound-effect tool; it imports it and renders in Node with `node-web-audio-api`).
 
 **Created 2026-11-07** by moving `sfx.js`, its test and `docs/sfx.md` out of the game repo (the file is byte-for-byte the game repo's working copy, which included the uncommitted 2026-11-06 work: envelopes, the soft limiter, vibrato/tremolo/FM/detune, `renderScore`). See "Not done" for what remains.
 

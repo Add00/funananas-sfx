@@ -1,26 +1,28 @@
 # Sound effects: `createSfx`
 
-How a game page, or a tool, makes sound. The engine is the package **`@funananas/sfx`** (`src/sfx.js`, plain ES module, no build step and no dependencies). The FunAnanas site builds it into its vendor bundle and makes it available on every page that loads it as **`window.createSfx`**: a page-wide global like `Alpine` and `io`, never imported by a game page (`views/AGENTS.md` in the game repo). A tool such as Juicelab imports it: `import { createSfx, renderScore } from "@funananas/sfx"`. Real uses to copy from, in the game repo: Sumo Ring (`packages/game-sumo/client/`) and Tower (`packages/game-tower/client/sfx.js`). Nothing is recorded, so there are no audio files to serve.
+How a game, or a tool, makes sound with **`@funananas/sfx`** (`src/sfx.js`: a plain ES module with no build step and no dependencies). A game or a tool brings its sounds as **scores**, plain data, and gets back something that plays them, or renders them to samples. A tool imports it: `import { createSfx, renderScore } from "@funananas/sfx"`. The FunAnanas site builds it into its vendor bundle as the page-wide global `window.createSfx`; how a game page wires it up (the global, the Alpine Sound button, the settings drawer, testing a game's scores) is in the game repo's `docs/sfx.md`, not here. Nothing is recorded, so there are no audio files to serve.
 
-The paths below that start `packages/` are in the FunAnanas game repo, which uses this package; everything under `src/` and `tests/` is this package's own.
+Examples below name real sounds in the FunAnanas game repo (Sumo Ring, Tower, Horde): their paths start `packages/`.
 
 ## The idea in one example
 
 A game lists its sounds as **scores**, hands them to `createSfx`, and plays them by name.
 
 ```js
+import { createSfx } from "@funananas/sfx";
+
 const SCORES = {
     // A score is a function from options to a list of voices.
     ping: () => [{ voice: "tone", type: "triangle", from: 880, length: 0.12, gain: 0.3 }],
 };
 
-const sfx = window.createSfx({ key: "mygame-sound", scores: SCORES });
+const sfx = createSfx({ key: "mygame-sound", scores: SCORES });
 sfx.wakeOnGesture(); // a browser makes no sound before a click or key
 
 sfx.play("ping");
 ```
 
-`key` is where the player's on/off choice is kept in this browser (`localStorage`, `"on"` or `"off"`, on by default), so give each game its own. The settings drawer's Sound switch (`Alpine.store("manager").muted`) is over every game's: with it off, nothing sounds.
+`key` is where the player's on/off choice is kept in this browser (`localStorage`, `"on"` or `"off"`, on by default), so give each game its own. On the FunAnanas site the settings drawer's Sound switch (`Alpine.store("manager").muted`) is over every game's: with it off, nothing sounds (the `isMuted` option below changes what counts as muted; with no Alpine on the page, nothing is muted).
 
 ## Voices
 
@@ -160,64 +162,6 @@ sfx.play("boom", { size: 1 }, 0.6, -0.4); // a blast off to the left, some way o
 
 `play` returns whether anything sounded (false before the first gesture, when switched off or muted, or for a name with no score), and never throws.
 
-## Keeping what is heard in step with what is seen
-
-Work out one list of events from the game's state and make both the sound and the picture from it, as Sumo Ring does (`events.js` finds the events, `soundFor()` in `sounds.js` maps each to a sound):
-
-```js
-function soundFor(event) {
-    switch (event.type) {
-        case "hit":
-            return { name: "hit", options: { force: event.force }, gain: 1 };
-        case "out":
-            return { name: "splash", options: {}, gain: event.mine ? 1 : 0.7 };
-        default:
-            return null; // silent
-    }
-}
-
-for (const event of detector.push(state, me)) {
-    const sound = soundFor(event);
-    if (sound !== null) sfx.play(sound.name, sound.options, sound.gain);
-    // ...and make the sparks from the same event.
-}
-```
-
-## A Sound button
-
-Spread `sfx.switch()` into the page's Alpine store and bind a button to it. It gives the store `sound` (this game's choice, as the player left it), `muted()` (the settings drawer's switch), `soundOn()` (the choice under the drawer's switch) and `toggleSound()`, which flips the choice, keeps it, wakes the audio and plays the sound you name. The press is a click, so the confirmation says what "on" sounds like; leave the name out for none.
-
-```js
-// In the Alpine store
-...sfx.switch("block"),
-```
-
-```html
-<button type="button" :aria-pressed="String($store.mygame.soundOn())" @click="$store.mygame.toggleSound()">
-    Sound
-</button>
-```
-
-It has to be spread into the store literal, not called later, because the methods read `this.sound`, which Alpine makes reactive on the store.
-
-Sumo Ring's button wears corner brackets when on (`.sm-link[aria-pressed="true"]` in `sumo.css`) and its page also toggles it with the `M` key (`getStore()?.toggleSound()`).
-
-## Wiring it into a page
-
-In the page's script bundle (see Sumo Ring's `index.js`):
-
-```js
-import { SCORES } from "./sounds.js";
-
-const sfx = window.createSfx({ key: "mygame-sound", scores: SCORES });
-sfx.wakeOnGesture();
-document.addEventListener("alpine:init", () => Alpine.store("mygame", createStore(window.MYGAME_PAGE, sfx)));
-```
-
-A store that takes the engine as an argument can be tested with the real engine given nothing to play on (`createSfx({ key, storage: undefined, AudioContextClass: undefined })`) and `setOn`, `wake` and `play` replaced by `vi.fn()`, as Sumo's store tests do, so no test needs an audio context.
-
-If the page might load without the vendor bundle (a unit test importing the module), guard the global as Tower's `sfx.js` does: `const engine = globalThis.createSfx?.(...)` and call `engine?.play(...)`.
-
 ## Options for `createSfx`
 
 | Option                                   | Default                            | What it is                                                |
@@ -230,30 +174,11 @@ If the page might load without the vendor bundle (a unit test importing the modu
 
 The engine returned has `on`, `setOn(value)`, `wanted()` (on here and not muted in the drawer), `wake()`, `recover()` (resumes a context the browser stopped, never makes one), `wakeOnGesture(target = document)`, `play(name, options, gain)` and `switch(confirm)` (the Sound button's store fragment). `silentSfx` has the same surface and plays nothing.
 
-## Testing sounds
-
-A score is plain data, so check it without a browser. Sumo's `packages/game-sumo/tests/client/sounds.test.ts` walks every score and checks each voice: a known kind, a length and gain in range, a real pitch.
-
-```ts
-for (const name of Object.keys(SCORES)) {
-    for (const voice of SCORES[name]({ force: 0.7 })) {
-        expect(["tone", "hiss"]).toContain(voice.voice);
-        expect(voice.length).toBeGreaterThan(0);
-        expect(voice.gain).toBeGreaterThan(0);
-        expect(voice.gain).toBeLessThanOrEqual(1);
-    }
-}
-```
-
-The engine itself is tested once, against a stubbed audio context, in `tests/sfx.test.ts` of this package. What a sound **sounds like** can only be judged by listening: write the score, load the page, click once, and play it.
-
 ## Traps
 
 - **Nothing sounds before a click or key.** `wakeOnGesture()` handles it, on a tap's end (`pointerup`, `click`), a key and a press, and **keeps listening**: a browser can stop the context again (iOS does for a call or a backgrounded tab, leaving it `"interrupted"`), and the next gesture, or the page becoming visible, resumes it. Call `sfx.wake()` from a button's handler too.
-- **A new score needs a case wherever sounds are chosen** (Sumo's `soundFor`), and a test, or it is never played.
 - **Keep `gain` at most 1** and a voice's `length` short (the longest in the repo is 1.4 s); the engine does not limit them.
 - **Pick a unique `key`.** Two games sharing one share the player's on/off choice.
-- **Industry has not moved over yet** and still carries its own Web Audio code (its notification alerts). Wiggle moved: its scores are `packages/game-wiggle/client/sounds.js`, handed to the page as `window.WIGGLE_SOUNDS` by its deferred bundle, so its inline script makes the engine in `alpine:init`, not at load.
 
 ## Rendering a sound to samples
 
