@@ -21,7 +21,13 @@ It is one plain ES module with no dependencies and no build step: what you impor
 
 ## Using it
 
-Add it as a dependency (see [Publishing](#publishing) for where it is installed from) and import from `@funananas/sfx`. A tool that renders in Node needs a Web Audio implementation: pass its `OfflineAudioContext` as the `OfflineAudioContextClass` option of `renderScore` (Juicelab uses `node-web-audio-api`).
+Install it from GitHub by tag (there is no registry; see [Publishing](#publishing)) and import from `@funananas/sfx`:
+
+```bash
+npm install git+https://github.com/Add00/funananas-sfx.git#v2026.11.07
+```
+
+Then import from `@funananas/sfx`. A tool that renders in Node needs a Web Audio implementation: pass its `OfflineAudioContext` as the `OfflineAudioContextClass` option of `renderScore` (Juicelab uses `node-web-audio-api`).
 
 ## Developing
 
@@ -38,4 +44,6 @@ The version is a CalVer date, `YYYY.MM.DD`, as in WordWorks and Juicelab: the da
 
 ## Publishing
 
-Not decided yet: see AGENTS.md.
+This repo is public, and it is the registry: a consumer depends on `git+https://github.com/Add00/funananas-sfx.git#vYYYY.MM.DD` (always the explicit `https` form: npm's `github:` shortcut can lock an `ssh` address that a CI machine cannot reach) and moves to a new release by changing the tag. To release: set the version in `package.json` and `package-lock.json`, commit, tag `vYYYY.MM.DD`, and push the commit and the tag.
+
+The code is public to read but carries no licence (`UNLICENSED`: all rights reserved) until one is chosen.
