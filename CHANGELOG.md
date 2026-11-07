@@ -4,6 +4,10 @@ The engine's history before it became a package is in the FunAnanas game repo (`
 
 ## 2026-11-07
 
+### MIT licence
+
+Added a `LICENSE` (MIT) and `"license": "MIT"` in `package.json`. The tag `v2026.11.07` was made before it and still says `UNLICENSED` in its `package.json`; the licence is in the package metadata from the next release.
+
 ### The engine is a package
 
 `sfx.js` moved out of the FunAnanas game repo into `@funananas/sfx`, so the game and Juicelab (the sound-effect tool) share one copy and neither has to check out the other. The file is byte-for-byte the one that was in the game repo with the 2026-11-06 changes below; its tests (54, unchanged) and `docs/sfx.md` came with it. New: `src/sfx.d.ts`, types for every export, and `tests/types.test.ts`, which fails if the declarations and the module disagree.
