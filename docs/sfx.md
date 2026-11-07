@@ -103,6 +103,50 @@ Three more optional fields, on tones and noise alike. Like the others they are h
 
 An echo is made of separate delays, one per repeat (`echoTaps(echo)` lists them), not a feedback loop, so nothing keeps running after the last repeat and a rendered file ends where the sound does. **The sound is longer than its voices:** `endOf(voice)` is when a voice and its last repeat have ended, and `renderScore` uses it, so an echoed sound is not cut off. A tool that draws or measures a sound's length should use it too.
 
+### Space, place and shape: reverb, pan, noise colour, waves, slides
+
+More optional fields. All are held to a range, and a score cannot make `play` throw with them.
+
+```js
+// A hit in a stone hall: a 1.5 s room at the default mix, left of centre.
+{ voice: "hiss", length: 0.12, gain: 0.3, noise: "brown", reverb: { time: 1.5 }, pan: -0.4 }
+
+// A thin, nasal lead: a square wave with a narrow pulse.
+{ voice: "tone", type: "square", from: 440, length: 0.3, gain: 0.2, pulse: 0.15 }
+
+// An organ-ish tone built from its harmonics: the pitch, a quieter octave, a quieter fifth above that.
+{ voice: "tone", from: 220, length: 0.8, gain: 0.25, harmonics: [1, 0.5, 0.35, 0, 0.2] }
+
+// A laser that falls in a straight line instead of the usual curve.
+{ voice: "tone", type: "sawtooth", from: 2000, to: 200, length: 0.3, gain: 0.2, slide: "linear" }
+```
+
+- `reverb: { time, mix? }`: a room's tail. `time` is how long it takes to die away (0.1 to 3 s), `mix` how much of it is heard (0 to 1, default 0.35; 1 is drenched). It is a convolution with a generated room (noise that decays, from a fixed seed, so it sounds the same every time and a seeded render is the same file), scaled so the first 0.2 s have the same energy for any `time`. The tail is part of the sound's length (`endOf`). A reverb makes a voice noticeably longer and costs more to play than an echo: use it on a few voices, not all of them.
+- `pan`: -1 (left) to 1 (right) for this voice, with its echoes and room. It is heard in a stereo render (`renderScore(score, { channels: 2 })`) or on stereo speakers. In the default mono render a panned voice is mixed down and comes out up to 6 dB quieter at the extremes. This is separate from `play`'s own `pan` argument, which places the whole sound.
+- `noise`: on a hiss, `"white"` (the default), `"pink"` (softer, like rain or wind) or `"brown"` (a rumble, like distant thunder or an engine). They are made from the same noise as white, scaled to its average level so the colour does not change how loud the voice is (no peak goes past 1.5).
+- `pulse`: a square wave's width, 0.05 to 0.95. 0.5 is the ordinary square; narrower sounds thinner and nasal, and 0.1 and 0.9 sound the same. It only changes `type: "square"`.
+- `harmonics`: a tone's wave as the levels (0 to 1) of its first up to 32 harmonics, from the pitch itself upwards (`[1, 0.5]` is the pitch and a half-level octave above). It replaces `type` and `pulse`, and is scaled to the same peak as a plain wave. A list with no sound in it is ignored. A browser without `PeriodicWave` plays the plain `type`.
+- `slide`: `"linear"` makes a pitch slide in a straight line from `from` to `to`; the default is the exponential curve, which sounds even to the ear.
+
+### Modulation: let one thing move another
+
+`mod` is a list of up to four modulations, each letting a **source** move a **target** by an **amount**:
+
+```js
+// A filter that opens up over the sound, and a pitch that wobbles.
+{ voice: "tone", type: "sawtooth", from: 110, length: 1, gain: 0.2,
+  filter: { type: "lowpass", from: 300, q: 4 },
+  mod: [
+      { source: "rise", to: "cutoff", amount: 3 },
+      { source: "lfo", to: "pitch", amount: 40, rate: 5 },
+  ] }
+```
+
+- Sources (`MOD_SOURCES`): `lfo` swings both ways at `rate` Hz (0.1 to 40, default 5) in a `shape` (sine, triangle, square or sawtooth; default sine); `rise` goes from 0 to 1 over the voice's length, and `fall` from 1 to 0.
+- Targets (`MOD_TARGETS`) and what `amount` means: `pitch` in cents (up to 2400 either way, a tone only); `cutoff` in octaves (up to 6; needs a `filter`); `volume` as a fraction (-1 to 1; it only lowers the voice from its own gain, never raises it above it: an `lfo` at 0.5 swings the level between 0.5 and 1); `fm` as an index (up to 30; needs `fm`).
+- One modulation per target (the first is kept), and a modulation with nothing to push on (a `cutoff` with no filter, a `pitch` on noise) is left out. Positive and negative amounts push opposite ways, so `fall` with an amount of 2 is a `rise` with an amount of -2 from the other end.
+- `vibrato` and `tremolo` are still the quick way to the two most common LFO sounds. A browser without `ConstantSourceNode` plays `rise` and `fall` modulations without them.
+
 ### The limiter
 
 Every sound goes through a soft limiter before the speakers, so voices that stack (four guns and a wave, a chord of bells) are rounded off short of clipping. It is a `WaveShaperNode`: a peak under `CLIP_FROM` (0.6 of full scale) comes through exactly as it is, and above that the curve bends smoothly towards a ceiling of about 0.9 (-0.9 dB; eight loud square waves stacked measure exactly that). It is not oversampled on purpose: the resampling filter overshoots full scale on a hard edge, so the ceiling would not hold. A sound that stays under 0.6 is therefore not changed at all, which is the point of using a shaper and not a compressor: a `DynamicsCompressorNode` also changes the level of quiet sounds (about 5 dB lower in Chromium, and differently elsewhere). A browser without the node plays straight out. A score does not choose it, and a `mix()` that thins a busy update still saves the work of making the voices.
@@ -211,4 +255,4 @@ import { renderScore } from "@funananas/sfx";
 const buffer = await renderScore(score, { sampleRate: 44100 }); // a mono AudioBuffer, or undefined
 ```
 
-It builds the same voices as `play`, with the same master level (`level`, default 0.55) and the same limiter, on an `OfflineAudioContext`, so the samples are what was heard. It lasts until the last voice has ended, plus 0.02 s for a source to stop and a `tail` (default 0.15 s) of silence for the limiter, and never longer than `MAX_RENDER_SECONDS` (30). Options: `sampleRate` (44100), `gain` (a multiplier on every voice, as in `play`), `level`, `tail`, and `random`: the noise comes from it, so a seeded generator makes the same score render to the same samples. It resolves `undefined`, and never rejects, for an empty score, a browser with no `OfflineAudioContext`, or a render that fails (which is logged). It does not pan.
+It builds the same voices as `play`, with the same master level (`level`, default 0.55) and the same limiter, on an `OfflineAudioContext`, so the samples are what was heard. It lasts until the last voice has ended, plus 0.02 s for a source to stop and a `tail` (default 0.15 s) of silence for the limiter, and never longer than `MAX_RENDER_SECONDS` (30). Options: `sampleRate` (44100), `channels` (1, the default, or 2: stereo, which is where a voice's `pan` is heard), `gain` (a multiplier on every voice, as in `play`), `level`, `tail`, and `random`: the noise comes from it, so a seeded generator makes the same score render to the same samples. It resolves `undefined`, and never rejects, for an empty score, a browser with no `OfflineAudioContext`, or a render that fails (which is logged). It does not pan the whole sound (that is `play`'s argument), but a voice's own `pan` is rendered when `channels` is 2.

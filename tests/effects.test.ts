@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { rig } from "./rig";
 
 let sfx: any;
 
@@ -140,61 +141,6 @@ describe("driveCurve", () => {
 });
 
 describe("the audio graph", () => {
-    /** An OfflineAudioContext that records every node and what it is connected to. */
-    function rig() {
-        const nodes: any[] = [];
-        const constructed: number[][] = [];
-        const param = (value = 0) => ({
-            value,
-            setValueAtTime() {},
-            exponentialRampToValueAtTime() {},
-            linearRampToValueAtTime() {},
-        });
-        const make = (kind: string, extra: object = {}) => {
-            const node: any = {
-                kind,
-                to: [] as any[],
-                connect(next: any) {
-                    node.to.push(next);
-
-                    return next;
-                },
-                gain: param(1),
-                frequency: param(),
-                detune: param(),
-                Q: param(Number.NaN),
-                delayTime: param(),
-                type: "",
-                ...extra,
-            };
-            nodes.push(node);
-
-            return node;
-        };
-
-        class Offline {
-            currentTime = 0;
-            sampleRate: number;
-            destination = make("destination");
-            constructor(channels: number, length: number, sampleRate: number) {
-                this.sampleRate = sampleRate;
-                constructed.push([channels, length, sampleRate]);
-            }
-            createGain = () => make("gain");
-            createOscillator = () => make("osc", { start() {}, stop() {} });
-            createBufferSource = () => make("noise", { start() {}, stop() {} });
-            createBiquadFilter = () => make("filter");
-            createWaveShaper = () => make("shaper");
-            createDelay = (max: number) => make("delay", { max });
-            createBuffer = (_channels: number, length: number) => ({ getChannelData: () => new Float32Array(length) });
-            startRendering = () => Promise.resolve({});
-        }
-
-        const kinds = (kind: string) => nodes.filter((node) => node.kind === kind);
-
-        return { Offline, nodes, constructed, kinds };
-    }
-
     const render = async (score: unknown[], options: object = {}) => {
         const graph = rig();
         await sfx.renderScore(score, { OfflineAudioContextClass: graph.Offline, ...options });

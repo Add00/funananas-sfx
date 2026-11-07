@@ -4,6 +4,14 @@ The engine's history before it became a package is in the FunAnanas game repo (`
 
 ## Unreleased
 
+### Reverb, pan, noise colour, pulse width, custom waves, slide curve and a modulation matrix
+
+All optional and backward compatible: a voice without them makes the same graph it did (a test pins the node count), and the 54 original engine tests and the 29 effects tests pass untouched.
+
+- `reverb: { time, mix? }` (a generated room through a `ConvolverNode`, `impulseResponse()`), `pan` per voice, `noise: "pink" | "brown"` (`tintedNoise()`), `pulse` (`pulseWave()`), `harmonics` (`harmonicWave()`), `slide: "linear"`, and `mod: [{ source, to, amount, rate?, shape? }]` (sources `lfo`, `rise`, `fall`; targets `pitch`, `cutoff`, `volume`, `fm`; `MOD_SOURCES`, `MOD_TARGETS`). `renderScore` takes `channels: 2` for a stereo render (the default is still mono). `endOf` includes a reverb's tail.
+- **Real-Web-Audio measurements** (Node, `node-web-audio-api`) found three things the fakes could not: (1) Web Audio's own impulse-response normalisation spread a short sound's energy over the whole room and left the tail 20 to 40 dB under the voice, inaudible; the room is now scaled by the engine (`normalize = false`, unit energy in the first 0.2 s) and lifted 6 dB, so at the default mix the tail is about 11 dB under the voice for a 1.5 s room. (2) Pink and brown noise scaled to a peak of 1 came out 6 to 7 dB quieter than white; they are now scaled to white's average level (3 dB under, with no peak past 1.5). (3) The measurement harness itself: `node-web-audio-api`'s `getChannelData` is a view that dangles once the buffer is collected, so copy the samples at once.
+- Also measured: a linear slide from 440 to 880 Hz is at 660 Hz at the midpoint (the curve: 625); a pulse of 0.1 is brighter than a square and sounds the same as 0.9; harmonics `[0, 1]` sound an octave above `[1]` (878 Hz against 438); a `rise` of 1200 cents takes 300 Hz to about 546 Hz by 0.58 s of a 0.6 s voice; a cutoff `rise` of 4 octaves, a volume `fall` (rms 0.097 to 0.020) and an FM `rise` each move what they should; a panned voice is all in one channel at -1 or 1 (rms 0.0263) and half as loud in a mono mix-down. Eight deliberate breakages of the new code (a Fourier term, the wet level, the pan value, the volume base, the cutoff scaling, brown noise's integration, the reverb tail in `endOf`, the channel count) each made a test fail. **Not heard.**
+
 ### Resonance, drive and echo
 
 Backward compatible: three optional fields, and a voice without them makes exactly the audio graph it did (the 54 engine tests pass untouched, and a new one pins the node count).

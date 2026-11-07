@@ -66,8 +66,30 @@ const between = (value, low, high) => Math.min(high, Math.max(low, value));
  * - `echo: { time, feedback?, mix? }`: repeats of the voice, `time` 0.02 to 0.5 s apart,
  *   each `feedback` (0 to 0.85, default 0.4) times the one before, the first at `mix`
  *   (0 to 1, default 0.5). See `echoTaps` for the repeats this makes.
+ * - `reverb: { time, mix? }`: a room's tail, `time` 0.1 to 3 s long, at `mix` (0 to 1, default 0.35).
+ * - `pan`: -1 (left) to 1 (right) for this voice, in a stereo render or on stereo speakers.
+ * - `mod`: up to four `{ source, to, amount, rate?, shape? }` (see MOD_SOURCES and MOD_TARGETS), one per target.
+ * - `harmonics`: a tone's wave as the levels (0 to 1) of its first 32 harmonics; it replaces `type`.
+ * - `pulse`: a square wave's width, 0.05 to 0.95 (0.5 is the ordinary square).
+ * - `slide`: `"linear"` makes a tone's pitch slide in a straight line instead of the default curve.
+ * - `noise`: `"pink"` or `"brown"` for a hiss that is deeper than white noise.
  */
-export function modulation({ detune, vibrato, tremolo, fm, filter, drive, echo } = {}) {
+export function modulation({
+    detune,
+    vibrato,
+    tremolo,
+    fm,
+    filter,
+    drive,
+    echo,
+    reverb,
+    pan,
+    mod,
+    harmonics,
+    pulse,
+    slide,
+    noise,
+} = {}) {
     const wobble = (spec, rates, ceiling) => {
         if (typeof spec !== "object" || spec === null || !finite(spec.rate) || !finite(spec.depth)) return undefined;
         const depth = between(spec.depth, 0, ceiling);
@@ -100,6 +122,50 @@ export function modulation({ detune, vibrato, tremolo, fm, filter, drive, echo }
         }
     }
 
+    let space;
+    if (typeof reverb === "object" && reverb !== null && finite(reverb.time)) {
+        const mix = finite(reverb.mix) ? between(reverb.mix, 0, 1) : 0.35;
+        if (mix > 0) space = { time: between(reverb.time, 0.1, 3), mix };
+    }
+
+    const side = finite(pan) ? between(pan, -1, 1) : 0;
+
+    let matrix;
+    if (Array.isArray(mod)) {
+        const used = new Set();
+        const list = [];
+        for (const spec of mod) {
+            if (list.length >= MAX_MODS) break;
+            if (typeof spec !== "object" || spec === null) continue;
+            if (!MOD_SOURCES.includes(spec.source) || !MOD_TARGETS.includes(spec.to) || !finite(spec.amount)) continue;
+            if (used.has(spec.to)) continue; // one source per target: two could push a volume below silence
+            const reach = MOD_REACH[spec.to];
+            const amount = between(spec.amount, -reach, reach);
+            if (amount === 0) continue;
+            used.add(spec.to);
+            list.push(
+                spec.source === "lfo"
+                    ? {
+                          source: "lfo",
+                          to: spec.to,
+                          amount,
+                          rate: finite(spec.rate) ? between(spec.rate, 0.1, 40) : 5,
+                          shape: MOD_SHAPES.includes(spec.shape) ? spec.shape : "sine",
+                      }
+                    : { source: spec.source, to: spec.to, amount },
+            );
+        }
+        if (list.length > 0) matrix = list;
+    }
+
+    let partials;
+    if (Array.isArray(harmonics)) {
+        const levels = harmonics.slice(0, MAX_HARMONICS).map((level) => (finite(level) ? between(level, 0, 1) : 0));
+        if (levels.some((level) => level > 0)) partials = levels;
+    }
+
+    const duty = finite(pulse) ? between(pulse, 0.05, 0.95) : 0.5;
+
     return {
         detune: bend === 0 ? undefined : bend,
         vibrato: wobble(vibrato, [0.1, 40], 1200),
@@ -108,8 +174,27 @@ export function modulation({ detune, vibrato, tremolo, fm, filter, drive, echo }
         q,
         drive: driven > 0 ? driven : undefined,
         echo: repeats,
+        reverb: space,
+        pan: side === 0 ? undefined : side,
+        mods: matrix,
+        harmonics: partials,
+        pulse: duty === 0.5 ? undefined : duty,
+        slide: slide === "linear" ? "linear" : undefined,
+        noise: noise === "pink" || noise === "brown" ? noise : undefined,
     };
 }
+
+/** What a modulation may take from (`lfo` swings both ways, `rise` goes 0 to 1 over the voice, `fall` 1 to 0) and push on. */
+export const MOD_SOURCES = ["lfo", "rise", "fall"];
+export const MOD_TARGETS = ["pitch", "cutoff", "volume", "fm"];
+
+/** How far a modulation may reach, either way: cents, octaves, a fraction of the volume, an FM index. */
+const MOD_REACH = { pitch: 2400, cutoff: 6, volume: 1, fm: 30 };
+const MOD_SHAPES = ["sine", "triangle", "square", "sawtooth"];
+const MAX_MODS = 4;
+
+/** Most harmonics a custom wave may have. */
+export const MAX_HARMONICS = 32;
 
 /** Most repeats an echo makes, and the most seconds it may reach: a score cannot ask for more. */
 const MAX_TAPS = 8;
@@ -136,8 +221,9 @@ export function echoTaps(echo) {
 
 /** Seconds from the start of the sound until the voice, and the last of its echoes, has ended. */
 export function endOf(voice) {
-    const taps = echoTaps(modulation({ echo: voice.echo }).echo);
-    const tail = taps.length > 0 ? taps[taps.length - 1].delay : 0;
+    const { echo, reverb } = modulation({ echo: voice.echo, reverb: voice.reverb });
+    const taps = echoTaps(echo);
+    const tail = Math.max(taps.length > 0 ? taps[taps.length - 1].delay : 0, reverb ? reverb.time : 0);
 
     return (Number(voice.at) || 0) + Number(voice.length) + tail;
 }
@@ -176,6 +262,106 @@ export function softClipCurve(from = CLIP_FROM, size = 2049) {
     }
 
     return curve;
+}
+
+/**
+ * A wave as the levels of its harmonics: `levels[0]` is the pitch itself, `levels[1]` the octave above, and so on,
+ * each a sine, as the `real` and `imag` tables of a `PeriodicWave` (which the browser band-limits and scales to a
+ * peak of 1, so a custom wave is as loud as a plain one).
+ */
+export function harmonicWave(levels) {
+    const real = new Float32Array(levels.length + 1);
+    const imag = new Float32Array(levels.length + 1);
+    levels.forEach((level, index) => (imag[index + 1] = level));
+
+    return { real, imag };
+}
+
+/**
+ * A pulse wave of width `duty` (the part of each cycle it is high: 0.5 is a square wave) as `PeriodicWave` tables,
+ * from the Fourier series of a rectangle: a(n) = 2 sin(2 pi n duty) / (n pi), b(n) = 2 (1 - cos(2 pi n duty)) / (n pi).
+ */
+export function pulseWave(duty, harmonics = 64) {
+    const real = new Float32Array(harmonics + 1);
+    const imag = new Float32Array(harmonics + 1);
+    for (let n = 1; n <= harmonics; n++) {
+        real[n] = (2 * Math.sin(2 * Math.PI * n * duty)) / (n * Math.PI);
+        imag[n] = (2 * (1 - Math.cos(2 * Math.PI * n * duty))) / (n * Math.PI);
+    }
+
+    return { real, imag };
+}
+
+/** A reverb's `mix` of 1 is this many times the room's own level: with the room scaled to unit energy a mix of 1
+ * leaves the tail about 8 dB under a short voice, which is faint, so it is lifted 6 dB. */
+const WET_LEVEL = 2;
+
+/** The most a sample of pink or brown noise may reach (white noise peaks at 1). */
+const NOISE_CEILING = 1.5;
+
+/**
+ * Noise of another colour from white noise: `"pink"` (a filter of -3 dB an octave, Paul Kellet's) or
+ * `"brown"` (white noise added up, a rumble), each scaled to the average level of the white noise (so swapping the
+ * colour does not change how loud a voice is), with no peak above 1.5. Anything else gives the white noise back.
+ */
+export function tintedNoise(white, colour) {
+    if (colour !== "pink" && colour !== "brown") return white;
+
+    const out = new Float32Array(white.length);
+    let [b0, b1, b2, last] = [0, 0, 0, 0];
+    let peak = 0;
+    let energy = 0;
+    let whiteEnergy = 0;
+    for (let index = 0; index < white.length; index++) {
+        const sample = white[index];
+        if (colour === "pink") {
+            b0 = 0.99765 * b0 + sample * 0.099046;
+            b1 = 0.963 * b1 + sample * 0.2965164;
+            b2 = 0.57 * b2 + sample * 1.0526913;
+            out[index] = b0 + b1 + b2 + sample * 0.1848;
+        } else {
+            last = (last + 0.02 * sample) / 1.02;
+            out[index] = last;
+        }
+        peak = Math.max(peak, Math.abs(out[index]));
+        energy += out[index] ** 2;
+        whiteEnergy += sample ** 2;
+    }
+    // As loud as the white noise it came from (by average level, which is what the ear follows), unless that would
+    // push a peak past NOISE_CEILING, which brown noise's slow swings can.
+    if (peak > 0 && energy > 0) {
+        const scale = Math.min(Math.sqrt(whiteEnergy / energy), NOISE_CEILING / peak);
+        for (let index = 0; index < out.length; index++) out[index] *= scale;
+    }
+
+    return out;
+}
+
+/**
+ * A room's impulse response of `seconds` at `sampleRate`: noise that dies away to -60 dB at the end, scaled so its
+ * first 0.2 seconds have unit energy (use it with `normalize = false`: the browser's own scaling would spread a short
+ * sound's energy over the whole room and leave the tail inaudible). It is made from a
+ * fixed seed, not `random`, so a reverb sounds the same every time and a seeded render stays the same file.
+ */
+export function impulseResponse(seconds, sampleRate) {
+    const length = Math.max(1, Math.ceil(seconds * sampleRate));
+    const out = new Float32Array(length);
+    let seed = 0x9e3779b9;
+    for (let index = 0; index < length; index++) {
+        seed = (seed + 0x6d2b79f5) | 0; // mulberry32
+        let mixed = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed;
+        const noise = (((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296) * 2 - 1;
+        out[index] = noise * Math.exp((-6.9 * index) / length);
+    }
+
+    // Scaled so the first 0.2 s (the room's body, whatever its length) has unit energy: a long room decays
+    // more slowly but is not quieter, and the wet level means the same for a 0.5 s room and a 3 s one.
+    let energy = 0;
+    for (let index = 0; index < Math.min(length, Math.ceil(0.2 * sampleRate)); index++) energy += out[index] ** 2;
+    if (energy > 0) for (let index = 0; index < length; index++) out[index] /= Math.sqrt(energy);
+
+    return out;
 }
 
 /**
@@ -255,8 +441,84 @@ function hissOf(context, random) {
  * that plays.
  */
 function voiceMaker(context, noise) {
+    // Things made once per context and shared by its voices: noise of other colours, waves, rooms.
+    const tints = new Map();
+    const waves = new Map();
+    const rooms = new Map();
+
+    const noiseOf = (colour) => {
+        if (colour === undefined) return noise;
+        if (!tints.has(colour)) {
+            const white = noise.getChannelData(0);
+            const tinted = context.createBuffer(1, white.length, context.sampleRate);
+            tinted.getChannelData(0).set(tintedNoise(white, colour));
+            tints.set(colour, tinted);
+        }
+
+        return tints.get(colour);
+    };
+
+    // A browser without PeriodicWave, or one that refuses the tables, leaves the plain `type`.
+    const periodic = (key, tables) => {
+        if (typeof context.createPeriodicWave !== "function") return undefined;
+        try {
+            if (!waves.has(key)) waves.set(key, context.createPeriodicWave(...tables()));
+            return waves.get(key);
+        } catch {
+            return undefined;
+        }
+    };
+
+    const roomOf = (seconds) => {
+        const key = Math.round(seconds * 100);
+        if (!rooms.has(key)) {
+            const samples = impulseResponse(key / 100, context.sampleRate);
+            const room = context.createBuffer(1, samples.length, context.sampleRate);
+            room.getChannelData(0).set(samples);
+            rooms.set(key, room);
+        }
+
+        return rooms.get(key);
+    };
+
+    // A source of movement for a modulation: a slow oscillator (-1 to 1), or a control that runs 0 to 1 (rise) or
+    // 1 to 0 (fall) over the voice. It starts and stops with the voice. Undefined where the browser has no
+    // constant source, so that modulation is left out rather than the voice failing.
+    function mover(spec, start, length) {
+        if (spec.source === "lfo") {
+            const lfo = context.createOscillator();
+            lfo.type = spec.shape;
+            lfo.frequency.value = spec.rate;
+            run(lfo, start, length);
+
+            return lfo;
+        }
+        if (typeof context.createConstantSource !== "function") return undefined;
+
+        const control = context.createConstantSource();
+        const rising = spec.source === "rise";
+        control.offset.setValueAtTime(rising ? 0 : 1, start);
+        control.offset.linearRampToValueAtTime(rising ? 1 : 0, start + length);
+        run(control, start, length);
+
+        return control;
+    }
+
+    // Adds the modulation to `param`, `scale` units of it for each unit of the source.
+    function drive(spec, param, scale, start, length) {
+        const source = mover(spec, start, length);
+        if (!source) return;
+
+        const reach = context.createGain();
+        reach.gain.value = scale;
+        source.connect(reach);
+        reach.connect(param);
+    }
+
     // A sound rises over its attack, holds if it says to, and falls over the rest of its length.
-    function shape(source, { at = 0, length, gain, filter, attack, hold, curve, tremolo, drive, echo }, scale, into) {
+    function shape(source, voice, scale, into) {
+        const { at = 0, length, gain, filter, attack, hold, curve } = voice;
+        const m = modulation(voice);
         const start = context.currentTime + at;
         const loudness = context.createGain();
         const { rise, flat } = envelope({ length, attack, hold });
@@ -268,37 +530,36 @@ function voiceMaker(context, noise) {
         loudness.gain[ramp](0.0001, start + Math.max(length, rise + flat + 0.001));
 
         let last = source;
+        let filtered;
         if (filter) {
             const node = context.createBiquadFilter();
             node.type = filter.type;
-            const { q } = modulation({ filter });
             // A low or high pass takes its Q in decibels; a linear Q (the usual one) is 20 log10 of it.
-            if (q !== undefined)
-                node.Q.value = filter.type === "lowpass" || filter.type === "highpass" ? 20 * Math.log10(q) : q;
+            if (m.q !== undefined)
+                node.Q.value = filter.type === "lowpass" || filter.type === "highpass" ? 20 * Math.log10(m.q) : m.q;
             node.frequency.setValueAtTime(filter.from, start);
             if (filter.to) node.frequency.exponentialRampToValueAtTime(filter.to, start + length);
             last.connect(node);
             last = node;
+            filtered = node;
         }
 
-        const bend = modulation({ drive }).drive;
-        if (bend && typeof context.createWaveShaper === "function") {
+        if (m.drive && typeof context.createWaveShaper === "function") {
             const shaper = context.createWaveShaper();
-            shaper.curve = driveCurve(bend);
+            shaper.curve = driveCurve(m.drive);
             shaper.oversample = "2x";
             last.connect(shaper);
             last = shaper;
         }
 
-        const wobble = modulation({ tremolo }).tremolo;
-        if (wobble) {
+        if (m.tremolo) {
             // Gain swings between 1 - depth and 1, so a tremolo never makes a voice louder than its gain.
             const swing = context.createGain();
-            swing.gain.value = 1 - wobble.depth / 2;
+            swing.gain.value = 1 - m.tremolo.depth / 2;
             const lfo = context.createOscillator();
-            lfo.frequency.value = wobble.rate;
+            lfo.frequency.value = m.tremolo.rate;
             const reach = context.createGain();
-            reach.gain.value = wobble.depth / 2;
+            reach.gain.value = m.tremolo.depth / 2;
             lfo.connect(reach);
             reach.connect(swing.gain);
             last.connect(swing);
@@ -306,8 +567,31 @@ function voiceMaker(context, noise) {
             run(lfo, start, length);
         }
 
-        last.connect(loudness).connect(into);
-        const repeats = typeof context.createDelay === "function" ? echoTaps(modulation({ echo }).echo) : [];
+        for (const spec of m.mods ?? []) {
+            if (spec.to === "cutoff" && filtered) {
+                drive(spec, filtered.detune, spec.amount * 1200, start, length); // octaves, in the cents it takes
+            } else if (spec.to === "volume") {
+                // Never louder than the voice's own gain: the level swings between 1 - |amount| and 1.
+                const swings = spec.source === "lfo";
+                const level = context.createGain();
+                level.gain.value = (spec.amount >= 0 ? 1 - spec.amount : 1) + (swings ? spec.amount / 2 : 0);
+                drive(spec, level.gain, swings ? spec.amount / 2 : spec.amount, start, length);
+                last.connect(level);
+                last = level;
+            }
+        }
+
+        // Where the voice, its echoes and its room all go: through its own panner when it sits to one side.
+        let out = into;
+        if (m.pan !== undefined && typeof context.createStereoPanner === "function") {
+            const panner = context.createStereoPanner();
+            panner.pan.value = m.pan;
+            panner.connect(into);
+            out = panner;
+        }
+
+        last.connect(loudness).connect(out);
+        const repeats = typeof context.createDelay === "function" ? echoTaps(m.echo) : [];
         for (const { delay, gain: level } of repeats) {
             // One delay per repeat, each quieter: no loop, so it stops when the last one has sounded.
             const later = context.createDelay(delay);
@@ -316,8 +600,20 @@ function voiceMaker(context, noise) {
             fade.gain.value = level;
             loudness.connect(later);
             later.connect(fade);
-            fade.connect(into);
+            fade.connect(out);
         }
+
+        if (m.reverb && typeof context.createConvolver === "function") {
+            const room = context.createConvolver();
+            room.normalize = false; // the room is scaled in impulseResponse, and this must come before the buffer
+            room.buffer = roomOf(m.reverb.time);
+            const wet = context.createGain();
+            wet.gain.value = m.reverb.mix * WET_LEVEL;
+            loudness.connect(room);
+            room.connect(wet);
+            wet.connect(out);
+        }
+
         run(source, start, length);
     }
 
@@ -328,13 +624,14 @@ function voiceMaker(context, noise) {
     }
 
     // The pitch colour of a tone: a static detune, a vibrato (a slow oscillator
-    // added to the detune, in cents) and FM (a sine at a multiple of the pitch
-    // added to the frequency, in Hz).
+    // added to the detune, in cents), FM (a sine at a multiple of the pitch
+    // added to the frequency, in Hz), and what the modulation matrix pushes on them.
     function colour(oscillator, voice, start) {
-        const { detune, vibrato, fm } = modulation(voice);
+        const { detune, vibrato, fm, mods } = modulation(voice);
         const from = voice.from;
         const to = voice.to ?? voice.from;
         const { length } = voice;
+        const ramp = modulation(voice).slide === "linear" ? "linearRampToValueAtTime" : "exponentialRampToValueAtTime";
 
         if (detune !== undefined || vibrato) oscillator.detune.value = detune ?? 0;
 
@@ -348,34 +645,51 @@ function voiceMaker(context, noise) {
             run(lfo, start, length);
         }
 
+        let swing;
         if (fm) {
             // The swing is `index` times the modulator's own pitch, so the timbre
             // holds when the voice slides; `fm.to` moves the index over the voice.
             const modulator = context.createOscillator();
             modulator.frequency.setValueAtTime(from * fm.ratio, start);
-            modulator.frequency.exponentialRampToValueAtTime(to * fm.ratio, start + length);
-            const swing = context.createGain();
+            modulator.frequency[ramp](to * fm.ratio, start + length);
+            swing = context.createGain();
             swing.gain.setValueAtTime(Math.max(0.0001, fm.index * from * fm.ratio), start);
             swing.gain.exponentialRampToValueAtTime(Math.max(0.0001, fm.to * to * fm.ratio), start + length);
             modulator.connect(swing);
             swing.connect(oscillator.frequency);
             run(modulator, start, length);
         }
+
+        for (const spec of mods ?? []) {
+            if (spec.to === "pitch") drive(spec, oscillator.detune, spec.amount, start, length);
+            else if (spec.to === "fm" && swing) drive(spec, swing.gain, spec.amount * from * fm.ratio, start, length);
+        }
     }
 
     return function sound(voice, scale, into) {
         if (voice.voice === "hiss") {
             const source = context.createBufferSource();
-            source.buffer = noise;
+            source.buffer = noiseOf(modulation(voice).noise);
             shape(source, voice, scale, into);
             return;
         }
 
+        const { harmonics, pulse, slide } = modulation(voice);
         const oscillator = context.createOscillator();
-        oscillator.type = voice.type ?? "sine";
+        const type = voice.type ?? "sine";
+        // A custom wave replaces the type; a pulse width reshapes a square wave.
+        const custom = harmonics
+            ? periodic(`h:${harmonics}`, () => Object.values(harmonicWave(harmonics)))
+            : type === "square" && pulse !== undefined
+              ? periodic(`p:${pulse}`, () => Object.values(pulseWave(pulse)))
+              : undefined;
+        if (custom && typeof oscillator.setPeriodicWave === "function") oscillator.setPeriodicWave(custom);
+        else oscillator.type = type;
+
         const start = context.currentTime + (voice.at ?? 0);
+        const ramp = slide === "linear" ? "linearRampToValueAtTime" : "exponentialRampToValueAtTime";
         oscillator.frequency.setValueAtTime(voice.from, start);
-        oscillator.frequency.exponentialRampToValueAtTime(voice.to ?? voice.from, start + voice.length);
+        oscillator.frequency[ramp](voice.to ?? voice.from, start + voice.length);
         colour(oscillator, voice, start);
         shape(oscillator, voice, scale, into);
     };
@@ -546,7 +860,8 @@ const TAIL = 0.15;
  *
  * Options: `sampleRate` (default 44100), `gain` (a multiplier on every voice, as in
  * `play`), `level` (the master level, as in `createSfx`), `random` (the noise: seed
- * it, and the same score renders to the same samples), `tail`, and
+ * it, and the same score renders to the same samples), `tail`, `channels` (1, the default, or 2: a voice's
+ * `pan` is only heard in two), and
  * `OfflineAudioContextClass` for a test.
  *
  * Resolves `undefined`, and never rejects, for an empty score, a browser without
@@ -560,6 +875,7 @@ export async function renderScore(
         level = LEVEL,
         random = Math.random,
         tail = TAIL,
+        channels = 1,
         OfflineAudioContextClass = globalThis.OfflineAudioContext ?? globalThis.webkitOfflineAudioContext,
     } = {},
 ) {
@@ -570,7 +886,11 @@ export async function renderScore(
         const seconds = Math.min(MAX_RENDER_SECONDS, Math.max(...ends.filter(Number.isFinite), 0) + tail);
         if (!(seconds > 0)) return undefined;
 
-        const context = new OfflineAudioContextClass(1, Math.ceil(seconds * sampleRate), sampleRate);
+        const context = new OfflineAudioContextClass(
+            channels === 2 ? 2 : 1,
+            Math.ceil(seconds * sampleRate),
+            sampleRate,
+        );
         const voice = voiceMaker(context, hissOf(context, random));
         const out = masterOut(context, level);
         for (const part of score) voice(part, gain, out);

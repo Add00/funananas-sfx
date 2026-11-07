@@ -32,6 +32,29 @@ export interface FmSpec {
     to?: number;
 }
 
+/** A room's tail: `time` seconds long (0.1 to 3), at `mix` (0 to 1, default 0.35) of the voice. */
+export interface ReverbSpec {
+    time: number;
+    mix?: number;
+}
+
+export type ModSource = "lfo" | "rise" | "fall";
+export type ModTarget = "pitch" | "cutoff" | "volume" | "fm";
+
+/**
+ * Lets a source move a setting. `lfo` swings both ways at `rate` Hz (0.1 to 40, default 5) in `shape` (default
+ * sine); `rise` goes 0 to 1 over the voice, `fall` 1 to 0. `amount` is how far it pushes, either way: cents for
+ * `pitch` (up to 2400), octaves for `cutoff` (6), a fraction of the volume for `volume` (1, never louder than the
+ * voice's gain) and an index for `fm` (30). `cutoff` needs a filter and `fm` needs FM. One per target, up to four.
+ */
+export interface ModSpec {
+    source: ModSource;
+    to: ModTarget;
+    amount: number;
+    rate?: number;
+    shape?: Waveform;
+}
+
 interface VoiceBase {
     /** Seconds from the start of the sound. */
     at?: number;
@@ -50,6 +73,10 @@ interface VoiceBase {
     /** Distortion, 0 (none) to 1 (very hard). */
     drive?: number;
     echo?: EchoSpec;
+    reverb?: ReverbSpec;
+    /** -1 (left) to 1 (right), heard in a stereo render or on stereo speakers. */
+    pan?: number;
+    mod?: ModSpec[];
 }
 
 /** A pitch, which may slide from `from` to `to`. */
@@ -62,11 +89,19 @@ export interface ToneVoice extends VoiceBase {
     detune?: number;
     vibrato?: Wobble;
     fm?: FmSpec;
+    /** A custom wave: the levels (0 to 1) of the first harmonics (up to 32), from the pitch itself upwards. Replaces `type`. */
+    harmonics?: number[];
+    /** A square wave's width, 0.05 to 0.95 (0.5 is the ordinary square). */
+    pulse?: number;
+    /** How the pitch slides: `"exp"` (the default) or `"linear"`. */
+    slide?: "exp" | "linear";
 }
 
 /** Noise: wind, impacts, explosions, swishes. */
 export interface HissVoice extends VoiceBase {
     voice: "hiss";
+    /** `"white"` (the default), or `"pink"` or `"brown"`, which are deeper. */
+    noise?: "white" | "pink" | "brown";
 }
 
 export type Voice = ToneVoice | HissVoice;
@@ -135,6 +170,8 @@ export interface RenderOptions {
     random?: () => number;
     /** Seconds of silence after the last voice. */
     tail?: number;
+    /** 1 (the default) or 2. A voice's `pan` is only heard in 2. */
+    channels?: 1 | 2;
     /** Only for a test, or a runtime with no Web Audio of its own (Node, with a package for it). */
     OfflineAudioContextClass?: unknown;
 }
@@ -156,7 +193,7 @@ export function envelope(voice: { length: number; attack?: number; hold?: number
 };
 
 /** What a voice asks beyond its pitch and envelope, with every value held to its range. */
-export function modulation(voice?: Partial<ToneVoice>): {
+export function modulation(voice?: Partial<Omit<ToneVoice, "voice">> & { noise?: "white" | "pink" | "brown" }): {
     detune: number | undefined;
     vibrato: Wobble | undefined;
     tremolo: Wobble | undefined;
@@ -165,7 +202,33 @@ export function modulation(voice?: Partial<ToneVoice>): {
     q: number | undefined;
     drive: number | undefined;
     echo: Required<EchoSpec> | undefined;
+    reverb: Required<ReverbSpec> | undefined;
+    pan: number | undefined;
+    mods: ModSpec[] | undefined;
+    harmonics: number[] | undefined;
+    pulse: number | undefined;
+    slide: "linear" | undefined;
+    noise: "pink" | "brown" | undefined;
 };
+
+/** What a modulation may take from, and push on. */
+export const MOD_SOURCES: readonly ModSource[];
+export const MOD_TARGETS: readonly ModTarget[];
+
+/** Most harmonics a custom wave may have. */
+export const MAX_HARMONICS: number;
+
+/** `PeriodicWave` tables for a wave given as the levels of its harmonics. */
+export function harmonicWave(levels: number[]): { real: Float32Array; imag: Float32Array };
+
+/** `PeriodicWave` tables for a pulse wave of width `duty` (0.5 is a square wave). */
+export function pulseWave(duty: number, harmonics?: number): { real: Float32Array; imag: Float32Array };
+
+/** White noise made pink or brown, scaled to a peak of 1; any other colour gives the input back. */
+export function tintedNoise(white: Float32Array, colour: string): Float32Array;
+
+/** A room's impulse response: noise that dies away over `seconds`, the same every time. */
+export function impulseResponse(seconds: number, sampleRate: number): Float32Array;
 
 /** The repeats an echo makes: `delay` seconds after the voice, at `gain` times its level. */
 export function echoTaps(echo: Required<EchoSpec> | undefined): Array<{ delay: number; gain: number }>;
