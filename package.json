@@ -1,6 +1,6 @@
 {
     "name": "@funananas/sfx",
-    "version": "2026.11.07",
+    "version": "2026.11.08",
     "description": "FunAnanas's sound engine: games and tools bring sounds as plain-data scores, and it plays them, or renders them to samples, with Web Audio.",
     "type": "module",
     "private": true,

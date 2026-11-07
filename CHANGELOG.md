@@ -2,7 +2,7 @@
 
 The engine's history before it became a package is in the FunAnanas game repo (`packages/browser/client/sfx.js`, before 2026-11-06). Dates are the day a change was made; the package version is the day of a release (`YYYY.MM.DD`).
 
-## Unreleased
+## 2026-11-07 (release 2026.11.08)
 
 ### Reverb, pan, noise colour, pulse width, custom waves, slide curve and a modulation matrix
 

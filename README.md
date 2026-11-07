@@ -24,7 +24,7 @@ It is one plain ES module with no dependencies and no build step: what you impor
 Install it from GitHub by tag (there is no registry; see [Publishing](#publishing)) and import from `@funananas/sfx`:
 
 ```bash
-npm install git+https://github.com/Add00/funananas-sfx.git#v2026.11.07
+npm install git+https://github.com/Add00/funananas-sfx.git#v2026.11.08
 ```
 
 Then import from `@funananas/sfx`. A tool that renders in Node needs a Web Audio implementation: pass its `OfflineAudioContext` as the `OfflineAudioContextClass` option of `renderScore` (Juicelab uses `node-web-audio-api`).
