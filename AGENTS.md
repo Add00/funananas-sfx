@@ -24,7 +24,7 @@ Node 22 (`source ~/.nvm/nvm.sh; nvm use 22`).
 
 ## Where it lives
 
-A **public** GitHub repo, `Add00/funananas-sfx` (chosen 2026-11-07), installed by tag as a git dependency: `git+https://github.com/Add00/funananas-sfx.git#vYYYY.MM.DD`. Public so that no consumer's CI, and no server that runs `npm ci`, needs a token or a deploy key. Keep `"private": true` in `package.json` (it stops an accidental `npm publish`; it does not affect a git install) and keep the explicit `git+https` form in consumers. Nothing secret belongs in this repo: it is public, so no internal paths, hosts, keys or notes about how the games are deployed. There is no licence yet (`UNLICENSED`).
+A **public** GitHub repo, `Add00/funananas-sfx` (chosen 2026-11-07), installed by tag as a git dependency: `git+https://github.com/Add00/funananas-sfx.git#vYYYY.MM.DD`. Public so that no consumer's CI, and no server that runs `npm ci`, needs a token or a deploy key. Keep `"private": true` in `package.json` (it stops an accidental `npm publish`; it does not affect a git install) and keep the explicit `git+https` form in consumers. Nothing secret belongs in this repo: it is public, so no internal paths, hosts, keys or notes about how the games are deployed. It is MIT licensed (chosen 2026-11-07, as WordWorks is); the licence applies to this package only, not to the game repo.
 
 ## Not done
 

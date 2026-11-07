@@ -4,7 +4,7 @@
     "description": "FunAnanas's sound engine: games and tools bring sounds as plain-data scores, and it plays them, or renders them to samples, with Web Audio.",
     "type": "module",
     "private": true,
-    "license": "UNLICENSED",
+    "license": "MIT",
     "main": "./src/sfx.js",
     "types": "./src/sfx.d.ts",
     "exports": {

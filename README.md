@@ -46,4 +46,4 @@ The version is a CalVer date, `YYYY.MM.DD`, as in WordWorks and Juicelab: the da
 
 This repo is public, and it is the registry: a consumer depends on `git+https://github.com/Add00/funananas-sfx.git#vYYYY.MM.DD` (always the explicit `https` form: npm's `github:` shortcut can lock an `ssh` address that a CI machine cannot reach) and moves to a new release by changing the tag. To release: set the version in `package.json` and `package-lock.json`, commit, tag `vYYYY.MM.DD`, and push the commit and the tag.
 
-The code is public to read but carries no licence (`UNLICENSED`: all rights reserved) until one is chosen.
+MIT licensed: see [LICENSE](LICENSE).
