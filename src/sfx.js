@@ -14,7 +14,8 @@
  *   { voice: "tone", type, from, to?, at?, length, gain, filter? }   a pitch that may slide
  *   { voice: "hiss", at?, length, gain, filter? }                    noise
  *
- * `filter` is `{ type, from, to? }` on a biquad. Nothing is recorded, so there
+ * `filter` is `{ type, from, to?, q? }` on a biquad. Any voice may also carry `drive`
+ * (distortion) and `echo` (repeats): see `modulation`. Nothing is recorded, so there
  * are no files to serve. The engine owns what every game used to repeat: one
  * audio context made after a click or key (a browser makes no sound before
  * one), a second of noise for the hiss, the player's on/off choice kept in
@@ -59,8 +60,14 @@ const between = (value, low, high) => Math.min(high, Math.max(low, value));
  * - `fm: { ratio, index, to? }`: a sine at `ratio` (0.05 to 16) times the pitch, swinging
  *   the pitch by `index` (0 to 30) times its own frequency; `to` is the index at the end of
  *   the voice (default `index`), for a bell whose brightness dies away.
+ * - `filter.q`: the filter's resonance as the usual linear Q, 0.1 to 15 (about 0.7 is flat,
+ *   5 to 10 rings at the cutoff). Missing means the browser's own default.
+ * - `drive`: distortion, 0 (none) to 1 (very hard), on any voice.
+ * - `echo: { time, feedback?, mix? }`: repeats of the voice, `time` 0.02 to 0.5 s apart,
+ *   each `feedback` (0 to 0.85, default 0.4) times the one before, the first at `mix`
+ *   (0 to 1, default 0.5). See `echoTaps` for the repeats this makes.
  */
-export function modulation({ detune, vibrato, tremolo, fm } = {}) {
+export function modulation({ detune, vibrato, tremolo, fm, filter, drive, echo } = {}) {
     const wobble = (spec, rates, ceiling) => {
         if (typeof spec !== "object" || spec === null || !finite(spec.rate) || !finite(spec.depth)) return undefined;
         const depth = between(spec.depth, 0, ceiling);
@@ -77,12 +84,77 @@ export function modulation({ detune, vibrato, tremolo, fm } = {}) {
         if (index > 0 || last > 0) modulator = { ratio: between(fm.ratio, 0.05, 16), index, to: last };
     }
 
+    const q =
+        typeof filter === "object" && filter !== null && finite(filter.q) ? between(filter.q, 0.1, 15) : undefined;
+    const driven = finite(drive) ? between(drive, 0, 1) : 0;
+    let repeats;
+
+    if (typeof echo === "object" && echo !== null && finite(echo.time)) {
+        const mix = finite(echo.mix) ? between(echo.mix, 0, 1) : 0.5;
+        if (mix > 0) {
+            repeats = {
+                time: between(echo.time, 0.02, 0.5),
+                feedback: finite(echo.feedback) ? between(echo.feedback, 0, 0.85) : 0.4,
+                mix,
+            };
+        }
+    }
+
     return {
         detune: bend === 0 ? undefined : bend,
         vibrato: wobble(vibrato, [0.1, 40], 1200),
         tremolo: wobble(tremolo, [0.1, 60], 1),
         fm: modulator,
+        q,
+        drive: driven > 0 ? driven : undefined,
+        echo: repeats,
     };
+}
+
+/** Most repeats an echo makes, and the most seconds it may reach: a score cannot ask for more. */
+const MAX_TAPS = 8;
+const MAX_ECHO_SECONDS = 2;
+
+/**
+ * The repeats of an echo (as `modulation` returns it): `{ delay, gain }` seconds after the
+ * voice and how loud, until they fall under 2% of the voice, run out of taps or reach
+ * 2 seconds. They are separate delays, not a feedback loop, so nothing keeps sounding
+ * after the last one and a rendered sound ends where it should.
+ */
+export function echoTaps(echo) {
+    const taps = [];
+    if (!echo) return taps;
+
+    for (let index = 1; index <= MAX_TAPS && echo.time * index <= MAX_ECHO_SECONDS; index++) {
+        const gain = echo.mix * echo.feedback ** (index - 1);
+        if (gain < 0.02) break;
+        taps.push({ delay: echo.time * index, gain });
+    }
+
+    return taps;
+}
+
+/** Seconds from the start of the sound until the voice, and the last of its echoes, has ended. */
+export function endOf(voice) {
+    const taps = echoTaps(modulation({ echo: voice.echo }).echo);
+    const tail = taps.length > 0 ? taps[taps.length - 1].delay : 0;
+
+    return (Number(voice.at) || 0) + Number(voice.length) + tail;
+}
+
+/**
+ * The shape of the distortion, as a table for a `WaveShaperNode`: `tanh(k x)` scaled so
+ * full scale stays full scale, with `k` rising from 1 (hardly bent) to 21 (nearly a
+ * square wave) as `amount` goes from 0 to 1.
+ */
+export function driveCurve(amount, size = 2049) {
+    const k = 1 + 20 * between(finite(amount) ? amount : 0, 0, 1);
+    const curve = new Float32Array(size);
+    for (let index = 0; index < size; index++) {
+        curve[index] = Math.tanh(k * ((index / (size - 1)) * 2 - 1)) / Math.tanh(k);
+    }
+
+    return curve;
 }
 
 /** Peaks below this (of full scale) pass through exactly as they are. */
@@ -184,7 +256,7 @@ function hissOf(context, random) {
  */
 function voiceMaker(context, noise) {
     // A sound rises over its attack, holds if it says to, and falls over the rest of its length.
-    function shape(source, { at = 0, length, gain, filter, attack, hold, curve, tremolo }, scale, into) {
+    function shape(source, { at = 0, length, gain, filter, attack, hold, curve, tremolo, drive, echo }, scale, into) {
         const start = context.currentTime + at;
         const loudness = context.createGain();
         const { rise, flat } = envelope({ length, attack, hold });
@@ -199,10 +271,23 @@ function voiceMaker(context, noise) {
         if (filter) {
             const node = context.createBiquadFilter();
             node.type = filter.type;
+            const { q } = modulation({ filter });
+            // A low or high pass takes its Q in decibels; a linear Q (the usual one) is 20 log10 of it.
+            if (q !== undefined)
+                node.Q.value = filter.type === "lowpass" || filter.type === "highpass" ? 20 * Math.log10(q) : q;
             node.frequency.setValueAtTime(filter.from, start);
             if (filter.to) node.frequency.exponentialRampToValueAtTime(filter.to, start + length);
             last.connect(node);
             last = node;
+        }
+
+        const bend = modulation({ drive }).drive;
+        if (bend && typeof context.createWaveShaper === "function") {
+            const shaper = context.createWaveShaper();
+            shaper.curve = driveCurve(bend);
+            shaper.oversample = "2x";
+            last.connect(shaper);
+            last = shaper;
         }
 
         const wobble = modulation({ tremolo }).tremolo;
@@ -222,6 +307,17 @@ function voiceMaker(context, noise) {
         }
 
         last.connect(loudness).connect(into);
+        const repeats = typeof context.createDelay === "function" ? echoTaps(modulation({ echo }).echo) : [];
+        for (const { delay, gain: level } of repeats) {
+            // One delay per repeat, each quieter: no loop, so it stops when the last one has sounded.
+            const later = context.createDelay(delay);
+            later.delayTime.value = delay;
+            const fade = context.createGain();
+            fade.gain.value = level;
+            loudness.connect(later);
+            later.connect(fade);
+            fade.connect(into);
+        }
         run(source, start, length);
     }
 
@@ -470,7 +566,7 @@ export async function renderScore(
     if (!Array.isArray(score) || score.length === 0 || OfflineAudioContextClass === undefined) return undefined;
 
     try {
-        const ends = score.map((voice) => (Number(voice.at) || 0) + Number(voice.length) + 0.02);
+        const ends = score.map((voice) => endOf(voice) + 0.02);
         const seconds = Math.min(MAX_RENDER_SECONDS, Math.max(...ends.filter(Number.isFinite), 0) + tail);
         if (!(seconds > 0)) return undefined;
 

@@ -2,6 +2,16 @@
 
 The engine's history before it became a package is in the FunAnanas game repo (`packages/browser/client/sfx.js`, before 2026-11-06). Dates are the day a change was made; the package version is the day of a release (`YYYY.MM.DD`).
 
+## Unreleased
+
+### Resonance, drive and echo
+
+Backward compatible: three optional fields, and a voice without them makes exactly the audio graph it did (the 54 engine tests pass untouched, and a new one pins the node count).
+
+- `filter.q` (linear Q, 0.1 to 15; converted to decibels for a lowpass or highpass, which is how Web Audio takes it), `drive` (0 to 1, a `tanh` shaper after the filter, `driveCurve()`) and `echo: { time, feedback?, mix? }` (one delay per repeat, at most 8 and 2 seconds, none under 2%, `echoTaps()`). `modulation()` holds each to its range and drops what is not numbers. `endOf(voice)` is new, and `renderScore` uses it so the render includes the last repeat.
+- Types and `docs/sfx.md` ("Resonance, drive and echo") updated; the declarations test caught the three new exports before the types had them.
+- **Measured in Node's real Web Audio** (`node-web-audio-api`): echoes at 0.2, 0.4 and 0.6 s with peaks 0.129, 0.065 and 0.032 for a 0.162 voice at mix 0.8, feedback 0.5, and a render of 1.47 s against 0.27 s without; drive 0.8 on a quiet sine left the peak (-25.2 dB) and raised the average by 2.8 dB; Q 12 on a 1 kHz lowpass made noise 10.2 dB louder at the average and 12 dB at the peak. Four deliberate breakages of the new code (a missing connection, the decibel conversion, the drive curve, the render length) each made a test fail. **Not heard:** the ranges and curve shapes are my choices from the maths and the measurements, not from listening.
+
 ## 2026-11-07
 
 ### MIT licence

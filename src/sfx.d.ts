@@ -8,6 +8,15 @@ export interface Filter {
     type: BiquadFilterType;
     from: number;
     to?: number;
+    /** Resonance as the usual linear Q, 0.1 to 15 (about 0.7 is flat, 5 to 10 rings at the cutoff). */
+    q?: number;
+}
+
+/** Repeats of a voice: `time` seconds apart (0.02 to 0.5), each `feedback` (0 to 0.85, default 0.4) of the last, the first at `mix` (0 to 1, default 0.5). */
+export interface EchoSpec {
+    time: number;
+    feedback?: number;
+    mix?: number;
 }
 
 /** A wobble: `rate` in Hz, `depth` in cents (vibrato) or 0 to 1 (tremolo). */
@@ -38,6 +47,9 @@ interface VoiceBase {
     /** How the level falls: exponentially (the default) or in a straight line. */
     curve?: "exp" | "linear";
     tremolo?: Wobble;
+    /** Distortion, 0 (none) to 1 (very hard). */
+    drive?: number;
+    echo?: EchoSpec;
 }
 
 /** A pitch, which may slide from `from` to `to`. */
@@ -143,13 +155,26 @@ export function envelope(voice: { length: number; attack?: number; hold?: number
     flat: number;
 };
 
-/** A tone's wobble, with every value held to its range. */
+/** What a voice asks beyond its pitch and envelope, with every value held to its range. */
 export function modulation(voice?: Partial<ToneVoice>): {
     detune: number | undefined;
     vibrato: Wobble | undefined;
     tremolo: Wobble | undefined;
     fm: Required<FmSpec> | undefined;
+    /** The filter's linear Q. */
+    q: number | undefined;
+    drive: number | undefined;
+    echo: Required<EchoSpec> | undefined;
 };
+
+/** The repeats an echo makes: `delay` seconds after the voice, at `gain` times its level. */
+export function echoTaps(echo: Required<EchoSpec> | undefined): Array<{ delay: number; gain: number }>;
+
+/** Seconds from the start of the sound until the voice, and the last of its echoes, has ended. */
+export function endOf(voice: Pick<Voice, "at" | "length" | "echo">): number;
+
+/** The distortion's shape as a table for a `WaveShaperNode`; `amount` is 0 to 1. */
+export function driveCurve(amount: number, size?: number): Float32Array;
 
 /** Peaks below this (of full scale) pass through the limiter exactly as they are. */
 export const CLIP_FROM: number;

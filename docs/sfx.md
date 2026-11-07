@@ -82,6 +82,27 @@ Four more optional fields on a voice. All are held to a safe range (a value that
 
 A voice's modulators start and stop with it (just after its `length`), and the envelope applies to the result.
 
+### Resonance, drive and echo
+
+Three more optional fields, on tones and noise alike. Like the others they are held to a range, and a score cannot make `play` throw with them.
+
+```js
+// A "wow": noise through a lowpass that rings at its cutoff as it sweeps down.
+{ voice: "hiss", length: 0.5, gain: 0.15, filter: { type: "lowpass", from: 3000, to: 300, q: 8 } }
+
+// Crunch: a low saw pushed into distortion.
+{ voice: "tone", type: "sawtooth", from: 90, to: 45, length: 0.4, gain: 0.25, drive: 0.7 }
+
+// A zap that bounces off a far wall: repeats 0.12 s apart, each 0.5 times the last.
+{ voice: "tone", type: "square", from: 1800, to: 200, length: 0.15, gain: 0.2, echo: { time: 0.12, feedback: 0.5, mix: 0.6 } }
+```
+
+- `filter.q`: the filter's resonance as the usual linear Q, 0.1 to 15. About 0.7 is flat, 5 to 10 rings at the cutoff, and 15 whistles. **A resonant filter is louder:** a Q of 12 on a lowpass made noise about 10 dB louder in a measurement, so lower the voice's `gain` as the Q goes up. A missing `q` leaves the browser's own default, as before. (A lowpass or highpass takes its Q in decibels in Web Audio; the engine converts, so the number here is the same for every filter type.)
+- `drive`: distortion, 0 (none, the default) to 1 (very hard). A shaper after the filter and before the envelope, with the curve from `driveCurve(amount)`: `tanh(k x)` scaled so full scale stays full scale, `k` from 1 to 21. It raises the average level (0.8 gave about +3 dB on a sine) without raising the peak, so it sounds louder, not just rougher.
+- `echo: { time, feedback?, mix? }`: repeats of the voice as it sounds (after its envelope, filter and drive). `time` is the seconds between repeats (0.02 to 0.5); the first repeat is `mix` (0 to 1, default 0.5) of the voice, and each later one is `feedback` (0 to 0.85, default 0.4) times the one before. It stops when a repeat would be under 2% of the voice, after 8 repeats, or at 2 seconds. A `mix` of 0 is no echo.
+
+An echo is made of separate delays, one per repeat (`echoTaps(echo)` lists them), not a feedback loop, so nothing keeps running after the last repeat and a rendered file ends where the sound does. **The sound is longer than its voices:** `endOf(voice)` is when a voice and its last repeat have ended, and `renderScore` uses it, so an echoed sound is not cut off. A tool that draws or measures a sound's length should use it too.
+
 ### The limiter
 
 Every sound goes through a soft limiter before the speakers, so voices that stack (four guns and a wave, a chord of bells) are rounded off short of clipping. It is a `WaveShaperNode`: a peak under `CLIP_FROM` (0.6 of full scale) comes through exactly as it is, and above that the curve bends smoothly towards a ceiling of about 0.9 (-0.9 dB; eight loud square waves stacked measure exactly that). It is not oversampled on purpose: the resampling filter overshoots full scale on a hard edge, so the ceiling would not hold. A sound that stays under 0.6 is therefore not changed at all, which is the point of using a shaper and not a compressor: a `DynamicsCompressorNode` also changes the level of quiet sounds (about 5 dB lower in Chromium, and differently elsewhere). A browser without the node plays straight out. A score does not choose it, and a `mix()` that thins a busy update still saves the work of making the voices.
